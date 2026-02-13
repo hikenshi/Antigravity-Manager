@@ -1,12 +1,44 @@
 use serde::{Deserialize, Serialize};
 
-// Google OAuth configuration
-const CLIENT_ID: &str = "1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com";
-const CLIENT_SECRET: &str = "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";
+const CLIENT_ID_ENV: &str = "GOOGLE_CLIENT_ID";
+const CLIENT_SECRET_ENV: &str = "GOOGLE_CLIENT_SECRET";
+const CLIENT_ID_FALLBACK_ENV: &str = "CLIENT_ID";
+const CLIENT_SECRET_FALLBACK_ENV: &str = "CLIENT_SECRET";
+
 const TOKEN_URL: &str = "https://oauth2.googleapis.com/token";
 const USERINFO_URL: &str = "https://www.googleapis.com/oauth2/v2/userinfo";
 
 const AUTH_URL: &str = "https://accounts.google.com/o/oauth2/v2/auth";
+
+fn read_required_env(primary_key: &str, fallback_key: &str) -> Result<String, String> {
+    let value = std::env::var(primary_key)
+        .or_else(|_| std::env::var(fallback_key))
+        .map_err(|_| {
+            format!(
+                "Missing OAuth configuration. Set {} (or {}).",
+                primary_key, fallback_key
+            )
+        })?;
+
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return Err(format!(
+            "OAuth configuration is empty. Set {} (or {}) with a non-empty value.",
+            primary_key, fallback_key
+        ));
+    }
+    Ok(trimmed.to_string())
+}
+
+fn get_client_id() -> Result<String, String> {
+    read_required_env(CLIENT_ID_ENV, CLIENT_ID_FALLBACK_ENV)
+}
+
+fn get_client_credentials() -> Result<(String, String), String> {
+    let client_id = get_client_id()?;
+    let client_secret = read_required_env(CLIENT_SECRET_ENV, CLIENT_SECRET_FALLBACK_ENV)?;
+    Ok((client_id, client_secret))
+}
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct TokenResponse {
@@ -49,7 +81,8 @@ impl UserInfo {
 
 
 /// Generate OAuth authorization URL
-pub fn get_auth_url(redirect_uri: &str, state: &str) -> String {
+pub fn get_auth_url(redirect_uri: &str, state: &str) -> Result<String, String> {
+    let client_id = get_client_id()?;
     let scopes = vec![
         "https://www.googleapis.com/auth/cloud-platform",
         "https://www.googleapis.com/auth/userinfo.email",
@@ -59,7 +92,7 @@ pub fn get_auth_url(redirect_uri: &str, state: &str) -> String {
     ].join(" ");
 
     let params = vec![
-        ("client_id", CLIENT_ID),
+        ("client_id", client_id.as_str()),
         ("redirect_uri", redirect_uri),
         ("response_type", "code"),
         ("scope", &scopes),
@@ -69,12 +102,14 @@ pub fn get_auth_url(redirect_uri: &str, state: &str) -> String {
         ("state", state),
     ];
     
-    let url = url::Url::parse_with_params(AUTH_URL, &params).expect("Invalid Auth URL");
-    url.to_string()
+    let url = url::Url::parse_with_params(AUTH_URL, &params)
+        .map_err(|e| format!("Invalid Auth URL: {}", e))?;
+    Ok(url.to_string())
 }
 
 /// Exchange authorization code for token
 pub async fn exchange_code(code: &str, redirect_uri: &str) -> Result<TokenResponse, String> {
+    let (client_id, client_secret) = get_client_credentials()?;
     // [PHASE 2] 对于登录行为，尚未有 account_id，使用全局池阶梯逻辑
     let client = if let Some(pool) = crate::proxy::proxy_pool::get_global_proxy_pool() {
         pool.get_effective_client(None, 60).await
@@ -83,8 +118,8 @@ pub async fn exchange_code(code: &str, redirect_uri: &str) -> Result<TokenRespon
     };
     
     let params = [
-        ("client_id", CLIENT_ID),
-        ("client_secret", CLIENT_SECRET),
+        ("client_id", client_id.as_str()),
+        ("client_secret", client_secret.as_str()),
         ("code", code),
         ("redirect_uri", redirect_uri),
         ("grant_type", "authorization_code"),
@@ -134,6 +169,7 @@ pub async fn exchange_code(code: &str, redirect_uri: &str) -> Result<TokenRespon
 
 /// Refresh access_token using refresh_token
 pub async fn refresh_access_token(refresh_token: &str, account_id: Option<&str>) -> Result<TokenResponse, String> {
+    let (client_id, client_secret) = get_client_credentials()?;
     // [PHASE 2] 根据 account_id 使用对应的代理
     let client = if let Some(pool) = crate::proxy::proxy_pool::get_global_proxy_pool() {
         pool.get_effective_client(account_id, 60).await
@@ -142,8 +178,8 @@ pub async fn refresh_access_token(refresh_token: &str, account_id: Option<&str>)
     };
     
     let params = [
-        ("client_id", CLIENT_ID),
-        ("client_secret", CLIENT_SECRET),
+        ("client_id", client_id.as_str()),
+        ("client_secret", client_secret.as_str()),
         ("refresh_token", refresh_token),
         ("grant_type", "refresh_token"),
     ];
@@ -241,9 +277,11 @@ mod tests {
 
     #[test]
     fn test_get_auth_url_contains_state() {
+        std::env::set_var(CLIENT_ID_ENV, "test-client-id.apps.googleusercontent.com");
+
         let redirect_uri = "http://localhost:8080/callback";
         let state = "test-state-123456";
-        let url = get_auth_url(redirect_uri, state);
+        let url = get_auth_url(redirect_uri, state).expect("failed to build auth url");
         
         assert!(url.contains("state=test-state-123456"));
         assert!(url.contains("redirect_uri=http%3A%2F%2Flocalhost%3A8080%2Fcallback"));
