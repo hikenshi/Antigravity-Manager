@@ -4,6 +4,7 @@ const CLIENT_ID_ENV: &str = "GOOGLE_CLIENT_ID";
 const CLIENT_SECRET_ENV: &str = "GOOGLE_CLIENT_SECRET";
 const CLIENT_ID_FALLBACK_ENV: &str = "CLIENT_ID";
 const CLIENT_SECRET_FALLBACK_ENV: &str = "CLIENT_SECRET";
+const OAUTH_SCOPES_ENV: &str = "GOOGLE_OAUTH_SCOPES";
 
 const TOKEN_URL: &str = "https://oauth2.googleapis.com/token";
 const USERINFO_URL: &str = "https://www.googleapis.com/oauth2/v2/userinfo";
@@ -38,6 +39,22 @@ fn get_client_credentials() -> Result<(String, String), String> {
     let client_id = get_client_id()?;
     let client_secret = read_required_env(CLIENT_SECRET_ENV, CLIENT_SECRET_FALLBACK_ENV)?;
     Ok((client_id, client_secret))
+}
+
+fn get_scopes() -> String {
+    if let Ok(value) = std::env::var(OAUTH_SCOPES_ENV) {
+        let trimmed = value.trim();
+        if !trimmed.is_empty() {
+            return trimmed.to_string();
+        }
+    }
+
+    vec![
+        "https://www.googleapis.com/auth/cloud-platform",
+        "https://www.googleapis.com/auth/userinfo.email",
+        "https://www.googleapis.com/auth/userinfo.profile",
+    ]
+    .join(" ")
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -83,19 +100,13 @@ impl UserInfo {
 /// Generate OAuth authorization URL
 pub fn get_auth_url(redirect_uri: &str, state: &str) -> Result<String, String> {
     let client_id = get_client_id()?;
-    let scopes = vec![
-        "https://www.googleapis.com/auth/cloud-platform",
-        "https://www.googleapis.com/auth/userinfo.email",
-        "https://www.googleapis.com/auth/userinfo.profile",
-        "https://www.googleapis.com/auth/cclog",
-        "https://www.googleapis.com/auth/experimentsandconfigs"
-    ].join(" ");
+    let scopes = get_scopes();
 
     let params = vec![
         ("client_id", client_id.as_str()),
         ("redirect_uri", redirect_uri),
         ("response_type", "code"),
-        ("scope", &scopes),
+        ("scope", scopes.as_str()),
         ("access_type", "offline"),
         ("prompt", "consent"),
         ("include_granted_scopes", "true"),

@@ -16,6 +16,18 @@ Legacy fallback (supported, but not recommended):
 
 If these are missing or empty, the OAuth flow will return an error indicating which variable(s) must be set.
 
+## Optional Environment Variables
+
+### `GOOGLE_OAUTH_SCOPES`
+
+Override the OAuth scopes requested during login (space-separated).
+
+If not set, Antigravity Manager uses:
+
+- `https://www.googleapis.com/auth/cloud-platform`
+- `https://www.googleapis.com/auth/userinfo.email`
+- `https://www.googleapis.com/auth/userinfo.profile`
+
 ## Docker (docker run)
 
 Use `--env-file` (preferred) so secrets do not appear in your shell history:
